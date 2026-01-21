@@ -24,19 +24,49 @@ class Message(Base):
     entrepreneur_id = Column(String, ForeignKey("entrepreneurs.id"))
     role = Column(String)  # 'user' or 'assistant'
     content = Column(String)
+    status = Column(String, default="active")  # 'active' or 'archived'
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     entrepreneur = relationship("Entrepreneur", back_populates="messages")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = None
+AsyncSessionLocal = None
+
+def setup_database():
+    global engine, AsyncSessionLocal
+    if engine is None:
+        engine = create_async_engine(DATABASE_URL, echo=False)
+        AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, AsyncSessionLocal
 
 async def init_db():
-    async with engine.begin() as conn:
+    eng, _ = setup_database()
+    async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+async def reset_entrepreneur(entrepreneur_id: str):
+    from sqlalchemy import update
+    _, session_factory = setup_database()
+    async with session_factory() as session:
+        # Mark all active messages as archived
+        await session.execute(
+            update(Message)
+            .where(Message.entrepreneur_id == entrepreneur_id)
+            .where(Message.status == "active")
+            .values(status="archived")
+        )
+        
+        # Reset entrepreneur state
+        await session.execute(
+            update(Entrepreneur)
+            .where(Entrepreneur.id == entrepreneur_id)
+            .values(current_category="IDEATION", profile_data={}, question_count=0)
+        )
+        await session.commit()
 
 async def get_entrepreneur_state(entrepreneur_id: str):
     from app.models import EntrepreneurState, BusinessCategory
-    async with AsyncSessionLocal() as session:
+    _, session_factory = setup_database()
+    async with session_factory() as session:
         result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == entrepreneur_id))
         db_entrepreneur = result.scalars().first()
         
@@ -49,6 +79,7 @@ async def get_entrepreneur_state(entrepreneur_id: str):
         history_result = await session.execute(
             select(Message)
             .where(Message.entrepreneur_id == entrepreneur_id)
+            .where(Message.status == "active")
             .order_by(Message.timestamp.asc())
         )
         history = [{"role": m.role, "content": m.content} for m in history_result.scalars().all()]
@@ -62,7 +93,8 @@ async def get_entrepreneur_state(entrepreneur_id: str):
         )
 
 async def save_entrepreneur_state(state):
-    async with AsyncSessionLocal() as session:
+    _, session_factory = setup_database()
+    async with session_factory() as session:
         result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == state.entrepreneur_id))
         db_entrepreneur = result.scalars().first()
         
@@ -72,17 +104,20 @@ async def save_entrepreneur_state(state):
             db_entrepreneur.question_count = state.question_count
             await session.commit()
 
-async def add_message(entrepreneur_id: str, role: str, content: str):
-    async with AsyncSessionLocal() as session:
-        new_msg = Message(entrepreneur_id=entrepreneur_id, role=role, content=content)
+async def add_message(entrepreneur_id: str, role: str, content: str, status: str = "active"):
+    _, session_factory = setup_database()
+    async with session_factory() as session:
+        new_msg = Message(entrepreneur_id=entrepreneur_id, role=role, content=content, status=status)
         session.add(new_msg)
         await session.commit()
 
 async def get_last_n_exchanges(entrepreneur_id: str, n: int = 3) -> List[Dict[str, str]]:
-    async with AsyncSessionLocal() as session:
+    _, session_factory = setup_database()
+    async with session_factory() as session:
         result = await session.execute(
             select(Message)
             .where(Message.entrepreneur_id == entrepreneur_id)
+            .where(Message.status == "active")
             .order_by(desc(Message.timestamp), desc(Message.id))
             .limit(n * 2)
         )

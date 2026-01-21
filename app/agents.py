@@ -171,8 +171,16 @@ workflow.add_edge("question_generator", END)
 app_graph = workflow.compile()
 
 async def process_message(entrepreneur_id: str, message_text: str):
-    from app.database import get_entrepreneur_state, save_entrepreneur_state, add_message
+    from app.database import get_entrepreneur_state, save_entrepreneur_state, add_message, reset_entrepreneur
+    import os
     
+    # Check for /reset command
+    if message_text.strip().lower() == "/reset":
+        # Only allow in non-production environments
+        if os.getenv("APP_ENV", "dev") != "production":
+            await reset_entrepreneur(entrepreneur_id)
+            return "El proceso de registro ha sido reiniciado. ¿Cuál es su idea de negocio?"
+
     # 1. Get State (Creates entrepreneur if not exists)
     db_state = await get_entrepreneur_state(entrepreneur_id)
     
