@@ -5,23 +5,29 @@ Agentic onboarding system for Colombian entrepreneurs called "Empiiu" using Fast
 ## System Components
 - **FastAPI Gateway**: Receives messages and pushes them to background workers.
 - **Worker (LangGraph)**:
-    - **Context Retriever**: Fetches the last 3 exchanges from the mock DB.
+    - **Context Retriever**: Fetches the last 3 exchanges from the PostgreSQL DB.
     - **Business Analyst**: Updates the "Entrepreneur Profile" and checks category completion.
     - **Question Generator**: Generates the next follow-up question in Spanish.
-- **WhatsApp Integration**: Utility to send messages via Meta's Cloud API (Mocked).
+- **PostgreSQL**: Stores entrepreneur state, profiles, and conversation history.
 
 ## Prerequisites
 - [uv](https://github.com/astral-sh/uv) installed.
+- [Docker](https://www.docker.com/) installed.
 - [Ollama](https://ollama.com/) installed and running with `llama3`.
 
 ## Setup
 
-1. **Install dependencies**:
+1. **Start the Database**:
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Install dependencies**:
    ```bash
    uv sync
    ```
 
-2. **Run Ollama**:
+3. **Run Ollama**:
    Ensure you have the `llama3` model pulled:
    ```bash
    ollama pull llama3
@@ -41,14 +47,40 @@ Run the test suite using `pytest`:
 PYTHONPATH=. uv run pytest
 ```
 
-## Testing the Webhook
+## Database Management
 
-You can simulate an incoming WhatsApp message using `curl`:
+The database runs in a Docker container. You can inspect the data directly using `psql`.
+
+### View All Entrepreneurs
+```bash
+docker exec -it onboarding_v2-db-1 psql -U empiiu_user -d empiiu_db -c "SELECT * FROM entrepreneurs;"
+```
+
+### View Message History
+```bash
+docker exec -it onboarding_v2-db-1 psql -U empiiu_user -d empiiu_db -c "SELECT entrepreneur_id, role, content, status FROM messages ORDER BY timestamp ASC;"
+```
+
+### Enter Interactive Shell
+```bash
+docker exec -it onboarding_v2-db-1 psql -U empiiu_user -d empiiu_db
+```
+
+## Developer Commands
+
+### `/reset`
+Restarts the onboarding process for the current user.
+- **Behavior**: Marks all previous messages as `archived`, clears the `profile_data`, and resets `question_count` to 0.
+- **Environment**: Only available when `APP_ENV` is set to `dev` (default). It is disabled in `production`.
+- **Usage**: Send `/reset` as a message body to the webhook.
+
+## Testing the Webhook (cURL)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/whatsapp/webhook \
      -H "Content-Type: application/json" \
-     -d '{
+     -d 
+'{'
     "object": "whatsapp_business_account",
     "entry": [
         {
@@ -61,22 +93,13 @@ curl -X POST http://localhost:8000/api/v1/whatsapp/webhook \
                             "display_phone_number": "123456789",
                             "phone_number_id": "123456789"
                         },
-                        "contacts": [
-                            {
-                                "profile": {
-                                    "name": "Entrepreneur Name"
-                                },
-                                "wa_id": "573001234567"
-                            }
-                        ],
+                        "contacts": [{"profile": {"name": "Test User"}, "wa_id": "573001234567"}],
                         "messages": [
                             {
                                 "from": "573001234567",
                                 "id": "wamid.test_id",
                                 "timestamp": "1706726890",
-                                "text": {
-                                    "body": "Hola, tengo una idea para una app de café."
-                                },
+                                "text": {"body": "/reset"},
                                 "type": "text"
                             }
                         ]
@@ -88,5 +111,3 @@ curl -X POST http://localhost:8000/api/v1/whatsapp/webhook \
     ]
 }'
 ```
-
-Check the server logs to see the LangGraph nodes processing the message and generating a Spanish response.

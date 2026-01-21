@@ -2,28 +2,28 @@ import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 from app.agents import process_message
-from app.database import init_db, AsyncSessionLocal, Entrepreneur, Message, Base, engine as db_engine
+from app.database import init_db, Entrepreneur, Message, Base, setup_database
 from app.models import BusinessCategory
 from sqlalchemy import select, delete
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
-    async with db_engine.begin() as conn:
+    import app.database
+    app.database.engine = None
+    app.database.AsyncSessionLocal = None
+    eng, _ = setup_database()
+    async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield
+    await eng.dispose()
 
 @pytest.mark.asyncio
 async def test_full_onboarding_flow():
     ent_id = "573009999999"
     
     # 17 iterations total
-    # 1-15: Questions
-    # 16: Closing
-    # 17: Profile
-    
     responses = []
-    # 1-15: Questions
     for i in range(1, 16):
         responses.append({
             "updated_profile_data": {"info": f"data_{i}"},
@@ -31,14 +31,12 @@ async def test_full_onboarding_flow():
             "question": f"Question {i}?"
         })
     
-    # 16: Closing
     responses.append({
         "updated_profile_data": {"completed_step": True},
         "category_complete": True,
         "question": "¡Felicidades!"
     })
     
-    # 17: Profile
     responses.append({
         "updated_profile_data": {"profile_built": True},
         "category_complete": True,
@@ -67,7 +65,6 @@ async def test_full_onboarding_flow():
         elif "business profile summary" in prompt_content:
             return AIMessage(content=responses[-1]["question"])
         else:
-            # Question Generator
             idx = generator_calls
             if idx >= len(responses): idx = len(responses) - 1
             res_data = responses[idx]
@@ -80,26 +77,24 @@ async def test_full_onboarding_flow():
     mock_llm.ainvoke.side_effect = mocked_llm_invoke
 
     with patch("app.agents.llm", mock_llm):
-        # Run 15 iterations of questions
         for i in range(1, 16):
             question = await process_message(ent_id, f"Answer {i}")
             assert f"Question {i}?" in question
             
-        # 16th iteration: Closing Message
         closing_msg = await process_message(ent_id, "Final answer")
         assert "Felicidades" in closing_msg
         
-        # 17th iteration: Profile
         profile_msg = await process_message(ent_id, "Get profile")
         assert "Resumen Final" in profile_msg
 
-        # Final validation in DB
-        async with AsyncSessionLocal() as session:
+        # Final validation
+        from app.database import setup_database
+        _, Session = setup_database()
+        async with Session() as session:
             result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == ent_id))
             db_ent = result.scalars().first()
             assert db_ent.current_category == "COMPLETED"
             
-            # Check message count (17 user + 17 assistant = 34)
             msg_result = await session.execute(select(Message).where(Message.entrepreneur_id == ent_id))
             msgs = msg_result.scalars().all()
             assert len(msgs) == 34
