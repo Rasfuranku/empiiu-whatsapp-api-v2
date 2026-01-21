@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 # In production, these should be loaded from .env
 META_API_URL = os.getenv("META_API_URL", "https://graph.facebook.com/v19.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "800134303188808")
-ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "EAATfaMmKeWEBQS5tjZCtxmwZCab8iimWcRVxjPznmZAfhPPRBWyHfoJPZAZB0XMauSN1cqAKQT1DWZBwPIwd0g0dZCXaZA4TZApMKG68DDxGZA2zWZAefCklw4Bgf4oZCw8OxZBWa5aZCZBUq1IyFs9ynI1sa8agLCf3yqHZCLolnWaAuBZAukWwjXsm9r5olpiZBwfQKENFDdVWBKHUtAiKEuSZAzEZBaUNSKodPHixZCNvLJI15XxbN2AZCeWZAms4zv70Y4wjY6Q35ZBJVgaEVG2IqbIz9ZAWO5XQCZAy8ZD")
+ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 
 async def send_whatsapp_message(to_number: str, message_text: str):
     """
