@@ -4,9 +4,11 @@ from pydantic import BaseModel, Field
 
 class BusinessCategory(str, Enum):
     IDEATION = "IDEATION"
-    MARKET = "MARKET"
+    MARKETING = "MARKETING"
     FINANCIALS = "FINANCIALS"
-    TEAM = "TEAM"
+    SALES = "SALES"
+    CUSTOMER_SERVICES = "CUSTOMER_SERVICES"
+    LEGAL = "LEGAL"
     COMPLETED = "COMPLETED"
 
 class EntrepreneurState(BaseModel):
