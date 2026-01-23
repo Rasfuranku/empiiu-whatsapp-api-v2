@@ -3,7 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.models import WhatsAppWebhookPayload
 from app.agents import process_message
-from app.utils import send_whatsapp_message
+# from app.utils import send_whatsapp_message
 from app.database import init_db
 import logging
 import os
@@ -41,15 +41,18 @@ async def worker_process_message(entrepreneur_id: str, message_text: str, from_n
     Background worker that runs the LangGraph logic and sends the response.
     """
     logger.info(f"Worker processing message from {entrepreneur_id}")
+    print(f"\n[RECEIVING] From {from_number}: {message_text}")
     try:
         # Run the Brain (LangGraph)
         response_text = await process_message(entrepreneur_id, message_text)
         
+        print(f"[SENDING] To {from_number}: {response_text}\n")
         # Send response via WhatsApp
-        await send_whatsapp_message(from_number, response_text)
+        # await send_whatsapp_message(from_number, response_text)
         
     except Exception as e:
         logger.error(f"Error in worker process: {e}")
+        print(f"[ERROR] Worker process: {e}")
 
 @app.get("/api/v1/whatsapp/webhook")
 async def verify_webhook(

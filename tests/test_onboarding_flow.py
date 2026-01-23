@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+import os
 from unittest.mock import AsyncMock, patch
 from app.agents import process_message
 from app.database import init_db, Entrepreneur, Message, Base, setup_database
@@ -19,10 +20,10 @@ async def setup_db():
     await eng.dispose()
 
 @pytest.mark.asyncio
-async def test_full_onboarding_flow():
+async def test_full_onboarding_flow_with_db_and_reset():
     ent_id = "573009999999"
     
-    # 17 iterations total
+    # Mock LLM responses
     responses = []
     for i in range(1, 16):
         responses.append({
@@ -31,12 +32,14 @@ async def test_full_onboarding_flow():
             "question": f"Question {i}?"
         })
     
+    # 16th iteration response
     responses.append({
         "updated_profile_data": {"completed_step": True},
         "category_complete": True,
-        "question": "¡Felicidades!"
+        "question": "¡Felicidades! Hemos completado su perfil inicial."
     })
     
+    # Final profile response
     responses.append({
         "updated_profile_data": {"profile_built": True},
         "category_complete": True,
@@ -77,24 +80,61 @@ async def test_full_onboarding_flow():
     mock_llm.ainvoke.side_effect = mocked_llm_invoke
 
     with patch("app.agents.llm", mock_llm):
+        # 1. Test /reset at the beginning (should work)
+        os.environ["APP_ENV"] = "dev"
+        reset_response = await process_message(ent_id, "/reset")
+        assert "reiniciado" in reset_response
+
+        # 2. Iterate through onboarding
         for i in range(1, 16):
             question = await process_message(ent_id, f"Answer {i}")
             assert f"Question {i}?" in question
             
+            # Validate DB storage after each step
+            _, Session = setup_database()
+            async with Session() as session:
+                result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == ent_id))
+                db_ent = result.scalars().first()
+                assert db_ent.question_count == i
+                
+                msg_result = await session.execute(
+                    select(Message)
+                    .where(Message.entrepreneur_id == ent_id)
+                    .where(Message.status == "active")
+                    .order_by(Message.id.desc())
+                    .limit(2)
+                )
+                msgs = msg_result.scalars().all()
+                assert len(msgs) == 2
+                assert msgs[0].role == "assistant"
+                assert msgs[1].role == "user"
+                assert msgs[1].content == f"Answer {i}"
+        
+        # 3. 16th message (closing)
         closing_msg = await process_message(ent_id, "Final answer")
         assert "Felicidades" in closing_msg
         
+        # 4. Request profile
         profile_msg = await process_message(ent_id, "Get profile")
         assert "Resumen Final" in profile_msg
 
-        # Final validation
-        from app.database import setup_database
-        _, Session = setup_database()
+        # Final DB validation
         async with Session() as session:
             result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == ent_id))
             db_ent = result.scalars().first()
             assert db_ent.current_category == "COMPLETED"
             
-            msg_result = await session.execute(select(Message).where(Message.entrepreneur_id == ent_id))
+            # Check all exchanges stored (15 steps * 2 + 1 reset response? No, reset response is not stored in DB as a message in the current implementation of process_message if it returns early)
+            # Actually process_message for /reset:
+            # if message_text.strip().lower() == "/reset":
+            #     await reset_entrepreneur(entrepreneur_id)
+            #     return "..."
+            # It doesn't save the /reset message or the response to DB.
+            
+            # Let's check how many messages: 
+            # 15 iterations * 2 = 30
+            # + closing iteration * 2 = 32
+            # + profile iteration * 2 = 34
+            msg_result = await session.execute(select(Message).where(Message.entrepreneur_id == ent_id).where(Message.status == "active"))
             msgs = msg_result.scalars().all()
             assert len(msgs) == 34

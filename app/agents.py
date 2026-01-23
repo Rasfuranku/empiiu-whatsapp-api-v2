@@ -241,7 +241,9 @@ async def process_message(entrepreneur_id: str, message_text: str):
     }
     
     # 4. Run Graph
+    print(f"--- Running Graph for {entrepreneur_id} (Category: {db_state.current_category}, Count: {db_state.question_count}) ---")
     final_state = await app_graph.ainvoke(input_state)
+    print(f"--- Graph Finished. Next Category: {final_state['current_category']}, Next Count: {final_state.get('question_count')} ---")
     
     # 5. Save Assistant Message
     await add_message(entrepreneur_id, "assistant", final_state["generated_question"])
