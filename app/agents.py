@@ -42,13 +42,6 @@ async def business_analyst(state: AgentState):
     last_msg = state['last_user_message']
     question_count = state.get("question_count", 0)
     
-    # Force category completion if we reached the limit
-    if question_count >= 15:
-        return {
-            "is_category_complete": True,
-            "current_category": BusinessCategory.COMPLETED
-        }
-
     prompt = f"""
     You are an expert Business Analyst for 'Empiiu', an incubator for Colombian entrepreneurs.
     
@@ -61,16 +54,18 @@ async def business_analyst(state: AgentState):
     
     Task:
     1. Extract new key facts from the answer to update/enrich the profile data.
-    2. Determine if we have enough information to mark the current category ({category}) as COMPLETE.
-       - IDEATION: Problem, solution, and target audience.
-       - MARKET: Competitors and market size.
-       - FINANCIALS: Revenue model and costs.
-       - TEAM: Founders and roles.
+    2. Analyze information relevant to the current category:
+       - IDEATION
+       - MARKETING
+       - FINANCIALS
+       - SALES
+       - CUSTOMER_SERVICES
+       - LEGAL
     
     Output JSON format:
     {{
         "updated_profile_data": {{...}},
-        "category_complete": true/false
+        "category_complete": false
     }}
     """
     
@@ -82,7 +77,7 @@ async def business_analyst(state: AgentState):
         
     return {
         "profile_data": content.get("updated_profile_data", profile),
-        "is_category_complete": content.get("category_complete", False)
+        "is_category_complete": False # Logic handled by Question Generator based on count
     }
 
 # --- Node 3: Question Generator Agent ---
@@ -92,33 +87,53 @@ async def question_generator(state: AgentState):
     """
     category = state['current_category']
     profile = state['profile_data']
-    is_complete = state['is_category_complete']
     question_count = state.get("question_count", 0)
     
+    # Logic for Welcome Message (Question 0)
+    if question_count == 0:
+        return {
+            "generated_question": "¡Hola! Bienvenido a Empiiu. Soy tu copiloto de negocios. Para crear tu ruta de crecimiento, necesito entender en qué punto estás. Empecemos por lo básico: ¿Cuál es tu nombre, cómo se llama tu emprendimiento y de qué trata?",
+            "current_category": BusinessCategory.IDEATION,
+            "question_count": 1
+        }
+    
+    # Logic for Categories: 2 questions per category
+    # 0 -> Welcome (handled above)
+    # 1-2 -> Ideation
+    # 3-4 -> Marketing
+    # 5-6 -> Financials
+    # 7-8 -> Sales
+    # 9-10 -> Customer Services
+    # 11-12 -> Legal
+    # 13 -> Complete
+    
     next_category = category
-    if question_count >= 16:
-        next_category = BusinessCategory.COMPLETED
-    elif question_count == 15:
-        # This is the 16th iteration (Answer 15)
-        # We return a closing message and increment to 16
+    
+    if question_count == 1 or question_count == 2:
+        next_category = BusinessCategory.IDEATION
+    elif question_count == 3 or question_count == 4:
+        next_category = BusinessCategory.MARKETING
+    elif question_count == 5 or question_count == 6:
+        next_category = BusinessCategory.FINANCIALS
+    elif question_count == 7 or question_count == 8:
+        next_category = BusinessCategory.SALES
+    elif question_count == 9 or question_count == 10:
+        next_category = BusinessCategory.CUSTOMER_SERVICES
+    elif question_count == 11 or question_count == 12:
+        next_category = BusinessCategory.LEGAL
+    elif question_count == 13:
+        # End of questions. Send intermediate closing message.
         return {
             "generated_question": "¡Felicidades! Hemos completado su perfil inicial. Envíe cualquier mensaje para recibir el resumen final.",
-            "current_category": category,
-            "question_count": 16
+            "current_category": category, # Stay in previous category or move to COMPLETED? Let's stay or move to COMPLETED but not generate profile yet.
+            # Actually, to generate profile in NEXT turn, we should set state to COMPLETED here?
+            # Or use a special count logic.
+            # Let's say at 13 we send this message. And output state has count 14.
+            # Next turn (count 14) -> goes to COMPLETED block.
+            "question_count": 14
         }
-    elif is_complete:
-        if category == BusinessCategory.IDEATION:
-            next_category = BusinessCategory.MARKETING
-        elif category == BusinessCategory.MARKETING:
-            next_category = BusinessCategory.FINANCIALS
-        elif category == BusinessCategory.FINANCIALS:
-            next_category = BusinessCategory.SALES
-        elif category == BusinessCategory.SALES:
-            next_category = BusinessCategory.CUSTOMER_SERVICES
-        elif category == BusinessCategory.CUSTOMER_SERVICES:
-            next_category = BusinessCategory.LEGAL
-        elif category == BusinessCategory.LEGAL:
-            next_category = BusinessCategory.COMPLETED
+    elif question_count >= 14:
+        next_category = BusinessCategory.COMPLETED
             
     # Profile generation prompt
     if next_category == BusinessCategory.COMPLETED:
@@ -152,28 +167,28 @@ async def question_generator(state: AgentState):
     - Current Profile Data: {json.dumps(profile)}
 
     **NEXT STATEMENT SELECTION:**
-    Select the next uncovered "Diagnostic Statement" from the list below.
+    Select the next uncovered "Diagnostic Statement" from the list below based on the Current Category.
     *Do not ask these as literal questions. Use the Statement to formulate a natural, conversational question in Spanish.*
 
-    **PHASE 1: CONTEXT & IDENTITY (The Foundation):**
-    1. **IDENTITY (Context):** Confirm Name and Business Name.
-    2. **MATURITY (Context):** Determine time in market and current stage (Idea vs. Selling vs. Growing).
-    3. **CRITICAL PAIN (Context):** Identify the main "headache" (Sales, Disorder, Legal, Time).
+    **PHASE 1: CONTEXT & IDENTITY (Ideation):**
+    - Problem, solution, and target audience.
 
-    **PHASE 2: MARKET & STRATEGY (Marketing/Sales):** 
-    4. **VALUE PROPOSITION (BMC - Marketing):** Evaluate if they know *why* customers choose them (Differentiation).
-    5. **CUSTOMER SEGMENTS (BMC - Marketing):** Verify if they have a clear "Avatar" or sell to "everyone".
-    6. **CHANNELS (BMC - Sales):** How do customers arrive? (Social media, physical, referrals).
+    **PHASE 2: MARKET & STRATEGY (Marketing):** 
+    - Value Proposition (Differentiation).
+    - Customer Segments.
 
-    **PHASE 3: VIABILITY & ORDER (Finance/Legal):**
-    7. **REVENUE STREAMS (BMC - Sales):** Dependence on a single product vs. diversification.
-    8. **COST STRUCTURE (BMC - Finance):** **CRITICAL.** Do they mix personal/business money ("bolsillos mezclados")? Do they keep records?
-    9. **LEGAL STATUS (Context - Legal):** Formalization level (RUT, Chamber of Commerce) vs. Informal.
+    **PHASE 3: VIABILITY (Financials):**
+    - Revenue model and costs.
+    - Cost structure.
 
-    **PHASE 4: OPERATION & SERVICE (Ops/CS):**
-    10. **RELATIONSHIPS (BMC - Service):** What do they do to make customers buy *again*? (Retention).
-    11. **KEY ACTIVITIES/RESOURCES (BMC - Ops):** Operational bottlenecks. What consumes their time?
-    12. **PARTNERSHIPS (BMC - Ops):** Support network (Suppliers/Partners) vs. "Lone Wolf".
+    **PHASE 4: SALES:**
+    - Channels and sales strategy.
+
+    **PHASE 5: CUSTOMER SERVICE:**
+    - Relationships and retention.
+
+    **PHASE 6: LEGAL:**
+    - Formalization level (RUT, Chamber of Commerce).
 
     **Requirements:**
     - Output ONLY the text of the question in Spanish.
