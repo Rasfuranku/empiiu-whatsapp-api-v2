@@ -3,5 +3,7 @@ uvicorn
 langgraph
 langchain-ollama
 langchain-core
+langchain
 pydantic
 httpx
+python-dotenvalembic

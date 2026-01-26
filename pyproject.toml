@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.128.0",
     "greenlet>=3.3.0",
     "httpx>=0.28.1",
+    "langchain>=1.2.7",
     "langchain-core>=1.2.7",
     "langchain-ollama>=1.0.1",
     "langgraph>=1.0.6",
@@ -17,6 +18,10 @@ dependencies = [
     "pytest-asyncio>=1.3.0",
     "sqlalchemy>=2.0.45",
     "uvicorn>=0.40.0",
+    "python-dotenv>=1.2.1",
+    "langchain-classic>=1.0.1",
+    "alembic>=1.18.1",
+    "aiosqlite>=0.22.1",
 ]
 
 [dependency-groups]

@@ -1,26 +1,32 @@
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
-from app.agents import process_message
-from app.database import init_db, AsyncSessionLocal, Entrepreneur, Message, Base, engine as db_engine
-from app.models import BusinessCategory
-from sqlalchemy import select, delete
+from app.services.agent_service import process_agent_message
+from app.db.models import Entrepreneur, Message, Base
+from app.schemas.models import BusinessCategory
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
-@pytest_asyncio.fixture(autouse=True)
-async def setup_db():
-    async with db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+@pytest_asyncio.fixture
+async def engine():
+    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
+    yield engine
+    await engine.dispose()
+
+@pytest_asyncio.fixture
+async def session(engine):
+    Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as session:
+        yield session
 
 @pytest.mark.asyncio
-async def test_full_onboarding_flow():
-    ent_id = "573009999999"
-    
-    # 17 iterations total
-    # 1-15: Questions
-    # 16: Closing
-    # 17: Profile
+async def test_full_onboarding_flow(session):
+    phone = "573009999999"
     
     responses = []
     # 1-15: Questions
@@ -79,27 +85,27 @@ async def test_full_onboarding_flow():
     mock_llm = AsyncMock()
     mock_llm.ainvoke.side_effect = mocked_llm_invoke
 
-    with patch("app.agents.llm", mock_llm):
+    # Need to patch the llm in app.services.agent_service
+    with patch("app.services.agent_service.llm", mock_llm):
         # Run 15 iterations of questions
         for i in range(1, 16):
-            question = await process_message(ent_id, f"Answer {i}")
+            question = await process_agent_message(phone, f"Answer {i}", session)
             assert f"Question {i}?" in question
             
         # 16th iteration: Closing Message
-        closing_msg = await process_message(ent_id, "Final answer")
+        closing_msg = await process_agent_message(phone, "Final answer", session)
         assert "Felicidades" in closing_msg
         
         # 17th iteration: Profile
-        profile_msg = await process_message(ent_id, "Get profile")
+        profile_msg = await process_agent_message(phone, "Get profile", session)
         assert "Resumen Final" in profile_msg
 
         # Final validation in DB
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Entrepreneur).where(Entrepreneur.id == ent_id))
-            db_ent = result.scalars().first()
-            assert db_ent.current_category == "COMPLETED"
-            
-            # Check message count (17 user + 17 assistant = 34)
-            msg_result = await session.execute(select(Message).where(Message.entrepreneur_id == ent_id))
-            msgs = msg_result.scalars().all()
-            assert len(msgs) == 34
+        result = await session.execute(select(Entrepreneur).where(Entrepreneur.phone_number == phone))
+        db_ent = result.scalars().first()
+        assert db_ent.current_category == "COMPLETED"
+        
+        # Check message count (17 user + 17 assistant = 34)
+        msg_result = await session.execute(select(Message).where(Message.entrepreneur_id == db_ent.id))
+        msgs = msg_result.scalars().all()
+        assert len(msgs) == 34
